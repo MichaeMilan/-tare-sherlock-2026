@@ -5,167 +5,300 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {ILoansNFT} from "contracts/interfaces/ILoansNFT.sol";
 
-/**
- * @notice Per-loan role identifiers used by the address-book authorization layer.
- * @dev Each role's bit position is determined by enum order and the address-book
- *      bitmask stored in `ILoansAuth.addressBook`.
- */
-enum Roles {
-  Borrower,
-  Originator,
-  Investor,
-  Servicer
+/**  
+ * @thông_báo Định danh vai trò theo từng khoản vay được sử dụng bởi lớp ủy quyền sổ địa chỉ.  
+ * @notice Per-loan role identifiers used by the address-book authorization layer.  
+ * @nhà_phát_triển Vị trí bit của mỗi vai trò được xác định bởi thứ tự kiểu_liệt_kê  
+ *                 và mặt_nạ_bit sổ địa chỉ được lưu trong `ILoansAuth.addressBook`.  
+ * @dev Each role's bit position is determined by enum order and the address-book  
+ *      bitmask stored in `ILoansAuth.addressBook`.  
+ */  
+// kiểu_liệt_kê VaiTrò {  
+enum Roles {  
+  // NguoiVay,  
+  Borrower,  
+  // DonViKhoiTao,  
+  Originator,  
+  // NhaDauTu,  
+  Investor,  
+  // DonViDichVu  
+  Servicer  
+}  
+  
+/**  
+ * @thông_báo Trạng thái vòng đời khoản vay.  
+ * @notice Loan lifecycle status.  
+ */  
+// kiểu_liệt_kê TrangThaiKhoanVay {  
+enum LoanStatus {  
+  KhongTonTai, // 0 - Giá trị canh gác (dùng như "không thay đổi" trong cap_nhat_du_lieu_khoan_vay)  
+  DoesNotExist, // 0 - Sentinel value (used as "no change" in updateLoanData)  
+  DaKhoiTao,   // 1 - Khoản vay đã tạo, chờ giải ngân  
+  Created,     // 1 - Loan created, awaiting funding  
+  DaNhanVonDayDu, // 2 - Đã nhận vốn đầy đủ, chờ giải phóng  
+  FullyFunded,    // 2 - Fully funded, awaiting disbursement  
+  DangHoatDong, // 3 - Đã giải phóng và đang hoạt động  
+  Active,       // 3 - Disbursed and performing  
+  DaThanhToanDayDu, // 4 - Người vay đã thanh toán đầy đủ  
+  FullyPaid,        // 4 - Borrower paid in full  
+  DaHuy,     // 5 - Đã hủy trước khi giải phóng  
+  Cancelled, // 5 - Cancelled before disbursement  
+  DaXoaNo,   // 6 - Đã xóa nợ xấu  
+  ChargedOff, // 6 - Written off as bad debt  
+  DaDong  // 7 - Không còn hoạt động nào được mong đợi  
+  Closed  // 7 - No further activity expected  
+}  
+  
+/**  
+ * @thông_báo Bản ghi sổ cái bất biến của một lần chuyển nhượng từ tài khoản sang tài khoản.  
+ * @notice Immutable ledger record of a single account-to-account transfer.  
+ * @nhà_phát_triển Mọi hoạt động tài chính thay đổi trạng thái trong `Loans` đều tạo ra ít nhất một `BanGhi`.  
+ * @dev Every state-changing financial operation in `Loans` produces at least one `Entry`.  
+ *      `từ` và `đến` là các giá trị kiểu_liệt_kê `TaiKhoan` được ép kiểu sang `uint8`.  
+ *      `from` and `to` are `Account` enum values cast to `uint8`.  
+ *      `loai_ban_ghi` là một trong các hằng số trong `LedgerEntries.sol`.  
+ *      `entryType` is one of the constants in `LedgerEntries.sol`.  
+ */  
+// cấu_trúc BanGhi {  
+struct Entry {  
+  // int128 so_luong;  
+  int128 amount;  
+  // uint48 dau_thoi_gian;  
+  uint48 timestamp;  
+  // uint8 tu;  
+  uint8 from;  
+  // uint8 den;  
+  uint8 to;  
+  // uint16 loai_ban_ghi;  
+  uint16 entryType;  
+  // bytes32 tham_chieu;  
+  bytes32 ref;  
+}  
+  
+/**  
+ * @thông_báo Các trường trạng thái và ngày có thể thay đổi theo từng khoản vay,  
+ *            được cập nhật qua vòng đời khoản vay.  
+ * @notice Mutable per-loan status and date fields, updated through the loan lifecycle.  
+ */  
+// cấu_trúc DuLieuKhoanVay {  
+struct LoanData {  
+  // TrangThaiKhoanVay trang_thai;  
+  LoanStatus status;  
+  // uint48 cap_nhat_luc;  
+  uint48 updatedAt;  
+  // uint48 ngay_thanh_toan_cuoi;  
+  uint48 lastPaymentDate;  
+  // uint48 ngay_den_han_tiep;  
+  uint48 nextDueDate;  
+  // uint48 ngay_dao_han;  
+  uint48 maturityDate;  
 }
 
-/**
- * @notice Loan lifecycle status.
- */
-enum LoanStatus {
-  DoesNotExist, // 0 - Sentinel value (used as "no change" in updateLoanData)
-  Created, // 1 - Loan created, awaiting funding
-  FullyFunded, // 2 - Fully funded, awaiting disbursement
-  Active, // 3 - Disbursed and performing
-  FullyPaid, // 4 - Borrower paid in full
-  Cancelled, // 5 - Cancelled before disbursement
-  ChargedOff, // 6 - Written off as bad debt
-  Closed // 7 - No further activity expected
+/**  
+ * @thông_báo Điều khoản khoản vay, được đặt tại `giai_phong`.  
+ * @notice Loan terms, set at `disburse`.  
+ * Có thể chỉnh sửa sau đó qua `cap_nhat_dieu_khoan_khoan_vay` cho các trường hợp đặc biệt.  
+ * Can be edited thereafter via `updateLoanTerms` for edge cases.  
+ */  
+// cấu_trúc DieuKhoanKhoanVay {  
+struct LoanTerms {  
+  /// @thông_báo Ngày khởi tạo khoản vay  
+  /// @notice Loan origination date  
+  // uint48 ngay_khoi_tao;  
+  uint48 originationDate;  
+  /// @thông_báo Lãi suất hàng năm tính bằng điểm cơ bản (500 = 5.00%), quy ước đếm ngày 30/360.  
+  /// @notice Annual interest rate in basis points (500 = 5.00%), 30/360 day-count convention.  
+  // uint32 lai_suat;  
+  uint32 interestRate;  
+  /// @thông_báo Số tiền thanh toán hàng tháng dự kiến (đơn vị tiền tệ cơ sở).  
+  /// @notice Expected monthly payment amount (currency base units).  
+  // int128 thanh_toan_hang_thang_du_kien;  
+  int128 expectedMonthlyPayment;  
+}  
+  
+/**  
+ * @thông_báo Phân tích theo từng khoản vay được trả về bởi `rut_tien_nha_dau_tu` cho  
+ *            mỗi lần rút dòng tiền khoản vay được xử lý.  
+ * @notice Per-loan breakdown returned by `investorWithdraw` for  
+ *         each loan cashflows withdrawal processed.  
+ */  
+// cấu_trúc KetQuaRutTienNhaDauTu {  
+struct InvestorWithdrawalResult {  
+  // uint64 ma_khoan_vay;  
+  uint64 loanId;  
+  // int128 goc;  
+  int128 principal;  
+  // int128 lai;  
+  int128 interest;  
+}  
+  
+/**  
+ * @thông_báo Số tiền theo từng khoản vay được trả về bởi `rut_tien_don_vi_khoi_tao` cho mỗi khoản vay được xử lý.  
+ * @notice Per-loan amount returned by `originatorWithdraw` for each loan processed.  
+ */  
+// cấu_trúc KetQuaRutTienDonViKhoiTao {  
+struct OriginatorWithdrawalResult {  
+  // uint64 ma_khoan_vay;  
+  uint64 loanId;  
+  // int128 so_luong;  
+  int128 amount;  
+}  
+  
+/**  
+ * @thông_báo Phân tích theo từng khoản vay được trả về bởi `rut_tien_don_vi_dich_vu` cho mỗi khoản vay được xử lý.  
+ * @notice Per-loan breakdown returned by `servicerWithdraw` for each loan processed.  
+ */  
+// cấu_trúc KetQuaRutTienDonViDichVu {  
+struct ServicerWithdrawalResult {  
+  // uint64 ma_khoan_vay;  
+  uint64 loanId;  
+  // int128 phi_khac;  
+  int128 miscFee;  
+  // int128 phi_dich_vu;  
+  int128 servicingFee;  
+}  
+  
+/**  
+ * @thông_báo Ảnh chụp định giá tổng hợp được trả về bởi `lay_gia_tri_khoan_vay`.  
+ * @notice Aggregated valuation snapshot returned by `getLoanValues`.  
+ */  
+// cấu_trúc GiaTriKhoanVay {  
+struct LoanValue {  
+  /**  
+   * @thông_báo Vốn nhà đầu tư đã triển khai và chưa được hoàn trả:  
+   *            `-TK_GỐC_PHẢI_TRẢ_NHÀ_ĐẦU_TƯ - TK_GỐC_ĐÃ_HOÀN_TRẢ_NHÀ_ĐẦU_TƯ`.  
+   * @notice Investor capital deployed and not yet returned:  
+   *         `-ACC_INVESTOR_PRINCIPAL_PAYABLE - ACC_INVESTOR_PRINCIPAL_REPAID`.  
+   * @nhà_phát_triển Bao gồm cả phần vẫn còn với người vay và phần đã nằm dưới dạng  
+   *                 tiền mặt có thể rút trong `Loans.sol`.  
+   * @dev Includes both the portion still out with the borrower and the portion already sitting  
+   *      as withdrawable cash in `Loans.sol`.  
+   */  
+  // int128 goc_nha_dau_tu_con_lai;  
+  int128 outstandingInvestorPrincipal;  
+  /// @thông_báo Tiền mặt gốc được giữ trong Loans.sol cho nhà đầu tư, chờ rút.  
+  /// @notice Principal cash held in Loans.sol for the investor, awaiting withdrawal.  
+  // int128 goc_nha_dau_tu_co_the_rut;  
+  int128 investorPrincipalWithdrawable;  
+  /// @thông_báo Tiền mặt lãi được phân bổ theo thác nước được giữ trong Loans.sol cho nhà đầu tư, chờ rút.  
+  /// @notice Waterfall-allocated interest cash held in Loans.sol for the investor, awaiting withdrawal.  
+  // int128 lai_nha_dau_tu_co_the_rut;  
+  int128 investorInterestWithdrawable;  
+  // TrangThaiKhoanVay trang_thai;  
+  LoanStatus status;  
+  // uint48 ngay_den_han_tiep;  
+  uint48 nextDueDate;  
+}  
+  
+/**  
+ * @thông_báo Đầu vào mô tả một bản ghi sổ cái đơn lẻ được truyền vào `tao_ban_ghi_so_cai`.  
+ * @notice Input describing a single ledger entry passed to `createLedgerEntries`.  
+ */  
+// cấu_trúc DauVaoBanGhiSoCai {  
+struct LedgerEntryInput {  
+  // uint8 tu;  
+  uint8 from;  
+  // uint8 den;  
+  uint8 to;  
+  // int128 so_luong;  
+  int128 amount;  
+  // uint16 loai_ban_ghi;  
+  uint16 entryType;  
+  // bytes32 tham_chieu;  
+  bytes32 ref;  
 }
 
-/**
- * @notice Immutable ledger record of a single account-to-account transfer.
- * @dev Every state-changing financial operation in `Loans` produces at least one `Entry`.
- *      `from` and `to` are `Account` enum values cast to `uint8`.
- *      `entryType` is one of the constants in `LedgerEntries.sol`.
- */
-struct Entry {
-  int128 amount;
-  uint48 timestamp;
-  uint8 from;
-  uint8 to;
-  uint16 entryType;
-  bytes32 ref;
-}
-
-/**
- * @notice Mutable per-loan status and date fields, updated through the loan lifecycle.
- */
-struct LoanData {
-  LoanStatus status;
-  uint48 updatedAt;
-  uint48 lastPaymentDate;
-  uint48 nextDueDate;
-  uint48 maturityDate;
-}
-
-/**
- * @notice Loan terms, set at `disburse`.
- * Can be edited thereafter via `updateLoanTerms` for edge cases.
- */
-struct LoanTerms {
-  /// @notice Loan origination date
-  uint48 originationDate;
-  /// @notice Annual interest rate in basis points (500 = 5.00%), 30/360 day-count convention.
-  uint32 interestRate;
-  /// @notice Expected monthly payment amount (currency base units).
-  int128 expectedMonthlyPayment;
-}
-
-/**
- * @notice Per-loan breakdown returned by `investorWithdraw` for
- *         each loan cashflows withdrawal processed.
- */
-struct InvestorWithdrawalResult {
-  uint64 loanId;
-  int128 principal;
-  int128 interest;
-}
-
-/**
- * @notice Per-loan amount returned by `originatorWithdraw` for each loan processed.
- */
-struct OriginatorWithdrawalResult {
-  uint64 loanId;
-  int128 amount;
-}
-
-/**
- * @notice Per-loan breakdown returned by `servicerWithdraw` for each loan processed.
- */
-struct ServicerWithdrawalResult {
-  uint64 loanId;
-  int128 miscFee;
-  int128 servicingFee;
-}
-
-/**
- * @notice Aggregated valuation snapshot returned by `getLoanValues`.
- */
-struct LoanValue {
-  /**
-   * @notice Investor capital deployed and not yet returned:
-   *         `-ACC_INVESTOR_PRINCIPAL_PAYABLE - ACC_INVESTOR_PRINCIPAL_REPAID`.
-   * @dev Includes both the portion still out with the borrower and the portion already sitting
-   *      as withdrawable cash in `Loans.sol`.
-   */
-  int128 outstandingInvestorPrincipal;
-  /// @notice Principal cash held in Loans.sol for the investor, awaiting withdrawal.
-  int128 investorPrincipalWithdrawable;
-  /// @notice Waterfall-allocated interest cash held in Loans.sol for the investor, awaiting withdrawal.
-  int128 investorInterestWithdrawable;
-  LoanStatus status;
-  uint48 nextDueDate;
-}
-
-/**
- * @notice Input describing a single ledger entry passed to `createLedgerEntries`.
- */
-struct LedgerEntryInput {
-  uint8 from;
-  uint8 to;
-  int128 amount;
-  uint16 entryType;
-  bytes32 ref;
-}
-
-/**
- * @title ILoans
- * @notice Core Tare lending protocol interface: loan lifecycle, double-entry ledger entries,
- *         per-role authorization, and cash custody for each loan.
- */
-interface ILoans {
-  /** @notice Thrown when a loan id does not correspond to a created loan. */
-  error DoesNotExist();
-  /** @notice Thrown when an account id is outside the supported `Account` range. */
-  error InvalidAccount();
-  /** @notice Thrown when an amount is zero, negative, or otherwise outside the allowed bounds. */
-  error InvalidAmount();
-  /** @notice Thrown when a supplied date is invalid (e.g. zero where required). */
-  error InvalidDate();
-  /** @notice Thrown when the loan's cash account balance is insufficient for a transfer. */
-  error InsufficientCashBalance();
-  /** @notice Thrown when `msg.sender` is not authorized for the attempted operation. */
-  error Unauthorized();
-  /** @notice Thrown when a zero address is supplied where one is not permitted. */
-  error ZeroAddress();
-  /** @notice Thrown when the supplied role is invalid for the requested operation. */
-  error InvalidRole();
-  /** @notice Thrown when the loan's current status disallows the requested operation. */
-  error InvalidStatus();
-  /** @notice Thrown when `netDisbursedAmount + originationFee` does not equal the loan commitment. */
-  error InvalidAmountDisbursed();
-  /** @notice Thrown when `disburse` is attempted before the loan has been fully funded. */
-  error NotFullyFunded();
-  /** @notice Thrown when a deposit would exceed the loan's outstanding commitment. */
-  error ExceedsCommitment();
-  /** @notice Thrown when an allocation would exceed a payable account's outstanding balance. */
-  error ExceedsPayable();
-  /** @notice Thrown when attempting to initialize a singleton-style pointer that is already set. */
-  error AlreadyInitialized();
-  /** @notice Thrown when an action is attempted on a loan whose NFT is currently locked. */
-  error LoanLocked();
-
-  /** @notice Emitted when a new loan is created. */
+/**  
+ * @tiêu_đề IKhoanVay  
+ * @title ILoans  
+ * @thông_báo Giao diện giao thức cho vay Tare cốt lõi: vòng đời khoản vay,  
+ *            bản ghi sổ cái bút toán kép, ủy quyền theo vai trò,  
+ *            và quản lý tiền mặt cho mỗi khoản vay.  
+ * @notice Core Tare lending protocol interface: loan lifecycle, double-entry ledger entries,  
+ *         per-role authorization, and cash custody for each loan.  
+ */  
+// giao_diện IKhoanVay {  
+interface ILoans {  
+  /** @thông_báo Ném ra khi id khoản vay không tương ứng với khoản vay đã tạo. */  
+  /** @notice Thrown when a loan id does not correspond to a created loan. */  
+  // lỗi KhongTonTai();  
+  error DoesNotExist();  
+  
+  /** @thông_báo Ném ra khi id tài khoản nằm ngoài phạm vi `TaiKhoan` được hỗ trợ. */  
+  /** @notice Thrown when an account id is outside the supported `Account` range. */  
+  // lỗi TaiKhoanKhongHopLe();  
+  error InvalidAccount();  
+  
+  /** @thông_báo Ném ra khi số lượng bằng không, âm, hoặc nằm ngoài giới hạn cho phép. */  
+  /** @notice Thrown when an amount is zero, negative, or otherwise outside the allowed bounds. */  
+  // lỗi SoLuongKhongHopLe();  
+  error InvalidAmount();  
+  
+  /** @thông_báo Ném ra khi ngày được cung cấp không hợp lệ (ví dụ: bằng không khi bắt buộc). */  
+  /** @notice Thrown when a supplied date is invalid (e.g. zero where required). */  
+  // lỗi NgayKhongHopLe();  
+  error InvalidDate();  
+  
+  /** @thông_báo Ném ra khi số dư tài khoản tiền mặt của khoản vay không đủ cho một lần chuyển nhượng. */  
+  /** @notice Thrown when the loan's cash account balance is insufficient for a transfer. */  
+  // lỗi SoDuTienMatKhongDu();  
+  error InsufficientCashBalance();  
+  
+  /** @thông_báo Ném ra khi `nguoi_gui_tin` không được ủy quyền cho thao tác đang thực hiện. */  
+  /** @notice Thrown when `msg.sender` is not authorized for the attempted operation. */  
+  // lỗi KhongDuocUyQuyen();  
+  error Unauthorized();  
+  
+  /** @thông_báo Ném ra khi địa chỉ không được cung cấp ở nơi không được phép. */  
+  /** @notice Thrown when a zero address is supplied where one is not permitted. */  
+  // lỗi DiaChiKhong();  
+  error ZeroAddress();  
+  
+  /** @thông_báo Ném ra khi vai trò được cung cấp không hợp lệ cho thao tác được yêu cầu. */  
+  /** @notice Thrown when the supplied role is invalid for the requested operation. */  
+  // lỗi VaiTroKhongHopLe();  
+  error InvalidRole();  
+  
+  /** @thông_báo Ném ra khi trạng thái hiện tại của khoản vay không cho phép thao tác được yêu cầu. */  
+  /** @notice Thrown when the loan's current status disallows the requested operation. */  
+  // lỗi TrangThaiKhongHopLe();  
+  error InvalidStatus();  
+  
+  /** @thông_báo Ném ra khi `so_luong_giai_phong_rong + phi_khoi_tao` không bằng cam kết khoản vay. */  
+  /** @notice Thrown when `netDisbursedAmount + originationFee` does not equal the loan commitment. */  
+  // lỗi SoLuongGiaiPhongKhongHopLe();  
+  error InvalidAmountDisbursed();  
+  
+  /** @thông_báo Ném ra khi `giai_phong` được thực hiện trước khi khoản vay được nhận vốn đầy đủ. */  
+  /** @notice Thrown when `disburse` is attempted before the loan has been fully funded. */  
+  // lỗi ChuaNhanVonDayDu();  
+  error NotFullyFunded();  
+  
+  /** @thông_báo Ném ra khi một khoản nạp sẽ vượt quá cam kết còn lại của khoản vay. */  
+  /** @notice Thrown when a deposit would exceed the loan's outstanding commitment. */  
+  // lỗi VuotQuaCamKet();  
+  error ExceedsCommitment();  
+  
+  /** @thông_báo Ném ra khi một khoản phân bổ sẽ vượt quá số dư còn lại của tài khoản phải trả. */  
+  /** @notice Thrown when an allocation would exceed a payable account's outstanding balance. */  
+  // lỗi VuotQuaPhaiTra();  
+  error ExceedsPayable();  
+  
+  /** @thông_báo Ném ra khi cố gắng khởi tạo một con trỏ kiểu singleton đã được đặt. */  
+  /** @notice Thrown when attempting to initialize a singleton-style pointer that is already set. */  
+  // lỗi DaKhoiTao();  
+  error AlreadyInitialized();  
+  
+  /** @thông_báo Ném ra khi một hành động được thực hiện trên khoản vay có NFT hiện đang bị khóa. */  
+  /** @notice Thrown when an action is attempted on a loan whose NFT is currently locked. */  
+  // lỗi KhoanVayBiKhoa();  
+  error LoanLocked();  
+  
+  /** @thông_báo Phát ra khi một khoản vay mới được tạo. */  
+  /** @notice Emitted when a new loan is created. */  
+  // sự_kiện KhoanVayDaTao(uint64 được_lập_chỉ_mục ma_khoan_vay);  
   event LoanCreated(uint64 indexed loanId);
+
 
   /**
    * @notice Emitted for every ledger entry written by the contract.

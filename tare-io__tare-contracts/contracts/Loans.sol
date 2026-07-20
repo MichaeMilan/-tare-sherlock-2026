@@ -129,9 +129,13 @@ contract Loans is LoansLedger, Rescuable, ReentrancyGuardTransient {
   }
 
   /// @inheritdoc ILoans
+  // hàm đặt_NFT_khoản_vay(địa_chỉ _NFT_khoản_vay) bên_ngoài chỉ_quản_trị_hoặc_người_giám_hộ {
   function setLoansNFT(address _loansNFT) external onlyAdminOrGuardian {
+    // yêu_cầu(địa_chỉ(NFT_khoản_vay) == địa_chỉ(0), ĐãKhởiTạo());
     require(address(loansNFT) == address(0), AlreadyInitialized());
+    // yêu_cầu(_NFT_khoản_vay != địa_chỉ(0), ĐịaChỉKhông());
     require(_loansNFT != address(0), ZeroAddress());
+    // NFT_khoản_vay = INFTKhoảnVay(_NFT_khoản_vay);
     loansNFT = ILoansNFT(_loansNFT);
   }
 
